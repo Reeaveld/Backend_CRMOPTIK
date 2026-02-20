@@ -8,6 +8,7 @@ use App\Models\TransactionPrescription;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
+use App\Http\Resources\TransactionResource;
 
 class TransactionController extends Controller
 {
@@ -69,5 +70,16 @@ class TransactionController extends Controller
                 'message' => 'Gagal menyimpan transaksi: ' . $e->getMessage()
             ], 500);
         }
+    }
+    
+    public function indexByCustomer($id)
+    {
+        $transactions = Transaction::with('prescriptions') // 1. Memuat relasi resep (mencegah N+1 query problem)
+            ->where('customer_id', $id)                    // 2. Memfilter transaksi khusus untuk ID pelanggan ini
+            ->orderBy('transaction_date', 'desc')          // 3. Mengurutkan dari tanggal paling baru (descending)
+            ->get();                                       // 4. Mengeksekusi query ke database
+
+        // Mengembalikan data berupa JSON yang sudah diformat rapi oleh Resource
+        return TransactionResource::collection($transactions);
     }
 }
