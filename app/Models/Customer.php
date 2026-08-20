@@ -66,7 +66,12 @@ class Customer extends Model
             return false;
         }
 
-        // Dummy BPJS
+        // Defensive guard: ImportController sekarang menulis no_hp = null (bukan 'BPJS-xxx'),
+        // tetapi pengecekan ini SENGAJA dipertahankan karena:
+        //   1. Database production mungkin masih memiliki record lama dengan 'BPJS-' prefix.
+        //   2. Data bisa ter-restore dari backup/dump sebelum fix diterapkan.
+        //   3. Biaya mempertahankan guard ini nol (satu if-statement) vs. risiko
+        //      mengirim pesan WhatsApp ke string non-telepon.
         if (str_starts_with($phone, 'BPJS-')) {
             return false;
         }
