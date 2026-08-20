@@ -3,99 +3,141 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
-use Illuminate\Http\Request;
 use App\Models\Customer;
 use App\Models\Transaction;
-use Smalot\PdfParser\Parser;
-use Illuminate\Support\Facades\DB;
 use Carbon\Carbon;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
+use Smalot\PdfParser\Parser;
 
 class ImportController extends Controller
 {
+    /**
+     * POST /api/import/bpjs
+     *
+     * Mengimpor data klaim kacamata BPJS dari file PDF.
+     * Catatan skema (HARUS dijaga konsisten dengan migrations):
+     *   - customers: (id, nama, no_hp, jenis_lensa, ukuran_kiri, ukuran_kanan, last_follow_up)
+     *   - transactions: (id, customer_id, invoice_number UNIQUE, amount, status, notes, transaction_date)
+     *
+     * Karena PDF BPJS tidak menyediakan no_hp pelanggan, kita pakai dummy
+     * "BPJS-<uniqid>" agar tidak melanggar constraint, dan tandai asal data
+     * lewat kolom `notes` di tabel transactions.
+     */
     public function importBpjs(Request $request)
     {
         // 1. Validasi File
         $request->validate([
-            'file' => 'required|mimes:pdf|max:10000', // Maks 10MB
+            'file' => 'required|mimes:pdf|max:10240', // Maks 10 MB
         ]);
 
         $file = $request->file('file');
-        
-        // 2. Parse PDF
-        $parser = new Parser();
-        $pdf = $parser->parseFile($file->getPathname());
-        $text = $pdf->getText();
 
-        // 3. Ekstraksi Data per Baris (Regex atau logic pemecah string)
-        // Kita pecah teks berdasarkan baris baru
-        $lines = explode("\n", $text);
-        
+        // 2. Parse PDF
+        try {
+            $parser = new Parser();
+            $pdf = $parser->parseFile($file->getPathname());
+            $text = $pdf->getText();
+        } catch (\Throwable $e) {
+            Log::error('ImportBpjs: gagal parse PDF', ['err' => $e->getMessage()]);
+            return response()->json([
+                'success' => false,
+                'message' => 'PDF tidak dapat dibaca: ' . $e->getMessage(),
+            ], 422);
+        }
+
+        // 3. Pecah teks per baris
+        $lines = preg_split("/\r\n|\n|\r/", $text);
+
         $importedCount = 0;
-        
-        DB::beginTransaction(); // Atomic Transaction (Semua atau Tidak Sama Sekali)
+        $skipped = [];
+
+        DB::beginTransaction(); // Atomic — semua atau tidak sama sekali
         try {
             foreach ($lines as $line) {
-                // LOGIKA PARSING (Perlu disesuaikan dengan format PDF spesifik Anda)
-                // Contoh: Mencari pola yang diawali angka transaksi panjang
-                // "01150006L25..."
-                if (strpos($line, '01150006L') !== false) {
-                    
-                    // Asumsi pemisahan data berdasarkan koma atau tab (sesuai PDF)
-                    // Mari kita anggap kita sudah dapat variabel: $nama, $tanggal, $harga, $invoice
-                    
-                    // --- SIMULASI EKSTRAKSI (Nanti kita sesuaikan regex-nya) ---
-                    $parts = preg_split('/\s{2,}/', trim($line)); // Split by multiple spaces
-                    if (count($parts) < 3) continue; 
-                    
-                    // Mapping data (Contoh kasar, harus dituning saat tes nyata)
-                    $invoiceNumber = $parts[0] ?? null;
-                    $dateRaw = $parts[1] ?? null; // "01/12/2025"
-                    $customerName = $parts[2] ?? 'Unknown';
-                    // Bersihkan harga (hapus koma)
-                    $amountRaw = str_replace(',', '', end($parts)); 
-
-                    // 4. STRATEGI IMPORT (Mode Aman)
-                    // Cari customer berdasarkan NAMA saja (karena HP tidak ada)
-                    // Jika tidak ada, buat baru dengan HP Dummy
-                    $customer = Customer::where('name', strtoupper($customerName))
-                                      ->where('address', 'Data Import BPJS') // Cek flag khusus
-                                      ->first();
-
-                    if (!$customer) {
-                        $customer = Customer::create([
-                            'name' => strtoupper($customerName),
-                            // PHONE DUMMY UNIK (Penting agar tidak error DB Unique)
-                            'phone' => 'BPJS-' . uniqid(), 
-                            'address' => 'Data Import BPJS', // Penanda Visual
-                            'email' => null,
-                        ]);
-                    }
-
-                    // 5. Simpan Transaksi
-                    Transaction::firstOrCreate(
-                        ['invoice_number' => $invoiceNumber], // Cek duplikat invoice
-                        [
-                            'customer_id' => $customer->id,
-                            'amount' => (float) $amountRaw,
-                            'status' => 'done', // BPJS biasanya dianggap selesai/tagihan
-                            'transaction_date' => Carbon::createFromFormat('d/m/Y', $dateRaw),
-                            'lens_summary' => 'Klaim Kacamata BPJS', // Default text
-                        ]
-                    );
-
-                    $importedCount++;
+                // Heuristik: baris klaim BPJS diawali pola invoice "01150006L"
+                // (Sesuaikan polanya bila kontrak data BPJS berubah.)
+                if (strpos($line, '01150006L') === false) {
+                    continue;
                 }
-            }
-            
-            DB::commit();
-            return response()->json([
-                'success' => true, 
-                'message' => "Berhasil mengimport $importedCount data transaksi."
-            ]);
 
-        } catch (\Exception $e) {
+                // Pecah baris berdasarkan dua spasi atau lebih (kolom PDF)
+                $parts = preg_split('/\s{2,}/', trim($line));
+                if (!is_array($parts) || count($parts) < 4) {
+                    $skipped[] = ['line' => $line, 'reason' => 'kolom kurang dari 4'];
+                    continue;
+                }
+
+                $invoiceNumber = $parts[0] ?? null;
+                $dateRaw       = $parts[1] ?? null;     // "01/12/2025"
+                $customerName  = strtoupper(trim($parts[2] ?? 'Unknown'));
+                // Bersihkan harga (hapus pemisah ribuan)
+                $amountRaw     = preg_replace('/[^\d.]/', '', str_replace(',', '', end($parts)));
+
+                // Validasi minimal per baris
+                $parsedDate = null;
+                try {
+                    if ($dateRaw) {
+                        $parsedDate = Carbon::createFromFormat('d/m/Y', $dateRaw)->startOfDay();
+                    }
+                } catch (\Throwable $e) {
+                    $skipped[] = ['line' => $line, 'reason' => 'format tanggal invalid'];
+                    continue;
+                }
+
+                if (!$invoiceNumber || !$parsedDate || $amountRaw === '' || $amountRaw === null) {
+                    $skipped[] = ['line' => $line, 'reason' => 'field wajib kosong'];
+                    continue;
+                }
+
+                // 4. STRATEGI IMPORT (Mode Aman, sesuai schema Indonesia)
+                // PDF BPJS TIDAK menyediakan nomor HP pelanggan.
+                // Customer dibuat dengan no_hp = null, profil dianggap belum lengkap
+                // sampai admin melengkapinya via PATCH /customers/{id}/complete-profile.
+                $customer = Customer::query()
+                    ->where('nama', $customerName)
+                    ->whereNull('no_hp')  // Customer BPJS yang belum dilengkapi
+                    ->first();
+
+                if (!$customer) {
+                    $customer = Customer::create([
+                        'nama'  => $customerName,
+                        'no_hp' => null,  // Profil belum lengkap — isProfileComplete() = false
+                    ]);
+                }
+
+                // 5. Simpan Transaksi (idempoten via invoice_number UNIQUE)
+                Transaction::firstOrCreate(
+                    ['invoice_number' => $invoiceNumber],
+                    [
+                        'customer_id'      => $customer->id,
+                        'amount'           => (float) $amountRaw,
+                        'status'           => 'done', // Klaim BPJS = sudah selesai
+                        'notes'            => 'Klaim Kacamata BPJS (impor PDF)',
+                        'transaction_date' => $parsedDate->toDateString(),
+                    ]
+                );
+
+                $importedCount++;
+            }
+
+            DB::commit();
+
+            return response()->json([
+                'success'    => true,
+                'message'    => "Berhasil mengimport {$importedCount} data transaksi.",
+                'imported'   => $importedCount,
+                'skipped'    => count($skipped),
+                'skip_log'   => $skipped, // untuk debugging — boleh dihapus di produksi
+            ]);
+        } catch (\Throwable $e) {
             DB::rollBack();
-            return response()->json(['success' => false, 'message' => $e->getMessage()], 500);
+            Log::error('ImportBpjs: rollback', ['err' => $e->getMessage()]);
+            return response()->json([
+                'success' => false,
+                'message' => $e->getMessage(),
+            ], 500);
         }
     }
 }

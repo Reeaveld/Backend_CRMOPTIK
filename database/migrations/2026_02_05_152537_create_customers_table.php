@@ -14,7 +14,7 @@ return new class extends Migration
         Schema::create('customers', function (Blueprint $table) {
             $table->id();
             $table->string('nama');
-            $table->string('no_hp')->index(); // Index agar pencarian cepat
+            $table->string('no_hp')->nullable()->index(); // Nullable: customer BPJS belum punya no_hp
             $table->string('jenis_lensa')->default('General');
             $table->string('ukuran_kiri')->default('0.00');
             $table->string('ukuran_kanan')->default('0.00');

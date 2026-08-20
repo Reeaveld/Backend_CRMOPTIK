@@ -3,12 +3,15 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Models\Customer;
+use App\Models\FollowUpSchedule;
 use App\Models\Transaction;
 use App\Models\TransactionPrescription;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use App\Http\Resources\TransactionResource;
+use Carbon\Carbon;
 
 class TransactionController extends Controller
 {
@@ -55,6 +58,33 @@ class TransactionController extends Controller
                         'lens_type' => $prescription['lens_type'],
                     ]);
                 }
+
+                // D. Auto-create jadwal follow-up
+                $customer = Customer::find($validated['customer_id']);
+                $transactionDate = Carbon::parse($validated['transaction_date']);
+
+                // Tentukan status awal berdasarkan kelengkapan profil customer
+                $initialStatus = $customer->isProfileComplete()
+                    ? FollowUpSchedule::STATUS_PENDING
+                    : FollowUpSchedule::STATUS_BLOCKED;
+
+                // D1. H+3: Cek kepuasan pelanggan (3 hari setelah transaksi)
+                FollowUpSchedule::create([
+                    'customer_id'    => $customer->id,
+                    'transaction_id' => $transaction->id,
+                    'type'           => FollowUpSchedule::TYPE_H_PLUS_3,
+                    'scheduled_date' => $transactionDate->copy()->addDays(3),
+                    'status'         => $initialStatus,
+                ]);
+
+                // D2. H+330: Pengingat periksa mata tahunan (330 hari setelah transaksi)
+                FollowUpSchedule::create([
+                    'customer_id'    => $customer->id,
+                    'transaction_id' => $transaction->id,
+                    'type'           => FollowUpSchedule::TYPE_H_PLUS_330,
+                    'scheduled_date' => $transactionDate->copy()->addDays(330),
+                    'status'         => $initialStatus,
+                ]);
 
                 return $transaction->load('prescriptions');
             });

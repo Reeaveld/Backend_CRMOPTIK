@@ -35,4 +35,10 @@ return [
         ],
     ],
 
+    'fonnte' => [
+        'mode'      => env('FONNTE_MODE', 'dry_run'),       // 'dry_run' atau 'live'
+        'api_token' => env('FONNTE_API_TOKEN', ''),
+        'api_url'   => env('FONNTE_API_URL', 'https://api.fonnte.com/send'),
+    ],
+
 ];

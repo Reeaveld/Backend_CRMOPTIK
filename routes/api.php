@@ -2,18 +2,35 @@
 
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
-use App\Http\Controllers\Api\CustomerController; // <--- Import Controller
+use App\Http\Controllers\Api\CustomerController;
 use App\Http\Controllers\Api\TransactionController;
+use App\Http\Controllers\Api\ImportController;
+use App\Http\Controllers\Api\AuthController;
 
-Route::get('/user', function (Request $request) {
-    return $request->user();
-})->middleware('auth:sanctum');
+// =====================================================================
+// AUTHENTICATION (Public Routes)
+// =====================================================================
+Route::post('/login', [AuthController::class, 'login']);
 
-Route::apiResource('customers', CustomerController::class);
-// Atau manual:
-// Route::get('/customers', [CustomerController::class, 'index']);
-// Route::post('/customers', [CustomerController::class, 'store']);
+// =====================================================================
+// PROTECTED API ROUTES (Sanctum Auth Required)
+// =====================================================================
+Route::middleware('auth:sanctum')->group(function () {
 
-// GET /api/customers/{id}/transactions -> Ambil riwayat si Budi
-Route::get('/customers/{id}/transactions', [TransactionController::class, 'indexByCustomer']);
-Route::post('/transactions', [TransactionController::class, 'store']); // Untuk input transaksi baru nanti
+    Route::get('/user', function (Request $request) {
+        return $request->user();
+    });
+
+    Route::post('/logout', [AuthController::class, 'logout']);
+
+    // Customers CRUD & Profile Completion
+    Route::apiResource('customers', CustomerController::class);
+    Route::patch('/customers/{id}/complete-profile', [CustomerController::class, 'completeProfile']);
+
+    // Transactions
+    Route::get('/customers/{id}/transactions', [TransactionController::class, 'indexByCustomer']);
+    Route::post('/transactions', [TransactionController::class, 'store']);
+
+    // Import BPJS
+    Route::post('/import/bpjs', [ImportController::class, 'importBpjs']);
+});
