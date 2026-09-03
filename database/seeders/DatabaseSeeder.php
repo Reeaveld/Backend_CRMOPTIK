@@ -17,10 +17,10 @@ class DatabaseSeeder extends Seeder
     public function run(): void
     {
         User::firstOrCreate(
-            ['email' => 'admin@optikcrm.com'],
+            ['email' => env('ADMIN_DEFAULT_EMAIL', 'admin@optikcrm.com')],
             [
                 'name'     => 'Admin Optik',
-                'password' => Hash::make('password123'),
+                'password' => Hash::make(env('ADMIN_DEFAULT_PASSWORD', 'password123')),
             ]
         );
     }

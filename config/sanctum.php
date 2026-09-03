@@ -47,7 +47,8 @@ return [
     |
     */
 
-    'expiration' => null,
+    // Token aktif selama 30 hari (43200 menit) sebelum wajib re-login
+    'expiration' => 60 * 24 * 30,
 
     /*
     |--------------------------------------------------------------------------

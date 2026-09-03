@@ -41,4 +41,8 @@ return [
         'api_url'   => env('FONNTE_API_URL', 'https://api.fonnte.com/send'),
     ],
 
+    'bpjs' => [
+        'invoice_prefix' => env('BPJS_INVOICE_PREFIX', '01150006L'),
+    ],
+
 ];

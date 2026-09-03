@@ -56,9 +56,9 @@ class ImportController extends Controller
         DB::beginTransaction(); // Atomic — semua atau tidak sama sekali
         try {
             foreach ($lines as $line) {
-                // Heuristik: baris klaim BPJS diawali pola invoice "01150006L"
-                // (Sesuaikan polanya bila kontrak data BPJS berubah.)
-                if (strpos($line, '01150006L') === false) {
+                // Heuristik: baris klaim BPJS diawali pola invoice dari config (default: "01150006L")
+                $prefix = config('services.bpjs.invoice_prefix', '01150006L');
+                if (strpos($line, $prefix) === false) {
                     continue;
                 }
 
