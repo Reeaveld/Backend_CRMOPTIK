@@ -68,4 +68,6 @@ Route::middleware(['auth:sanctum', 'throttle:60,1'])->group(function () {
 
     // Import BPJS (dibatasi 10 request/menit untuk menjaga resource parsing PDF)
     Route::post('/import/bpjs', [ImportController::class, 'importBpjs'])->middleware('throttle:10,1');
+    Route::post('/import/bpjs/parse', [ImportController::class, 'parseBpjs'])->middleware('throttle:10,1');
+    Route::post('/import/bpjs/commit', [ImportController::class, 'commitBpjs'])->middleware('throttle:10,1');
 });
