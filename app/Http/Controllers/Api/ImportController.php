@@ -177,7 +177,7 @@ class ImportController extends Controller
         $isCountVerified = ($headerTotalData !== null) ? ($totalParsed === $headerTotalData) : true;
         $isAmountVerified = ($headerTotalTagihan !== null) ? (abs($totalAmountParsed - $headerTotalTagihan) < 1) : true;
 
-        return response()->json([
+        $responseData = [
             'success'  => true,
             'metadata' => [
                 'nomor_fpk'            => $fpkNumber,
@@ -191,6 +191,13 @@ class ImportController extends Controller
                 'is_verified'          => ($isCountVerified && $isAmountVerified),
             ],
             'items'    => $items,
+        ];
+
+        $json = json_encode($responseData, JSON_UNESCAPED_UNICODE);
+
+        return response($json, 200, [
+            'Content-Type'   => 'application/json',
+            'Content-Length' => strlen($json),
         ]);
     }
 
@@ -308,7 +315,7 @@ class ImportController extends Controller
 
             DB::commit();
 
-            return response()->json([
+            $commitResult = [
                 'success'           => true,
                 'message'           => "Berhasil menyimpan {$importedCount} transaksi klaim BPJS ke database.",
                 'imported_count'    => $importedCount,
@@ -316,6 +323,13 @@ class ImportController extends Controller
                 'customers_updated' => $customersUpdated,
                 'schedules_pending' => $schedulesPending,
                 'schedules_blocked' => $schedulesBlocked,
+            ];
+
+            $json = json_encode($commitResult, JSON_UNESCAPED_UNICODE);
+
+            return response($json, 200, [
+                'Content-Type'   => 'application/json',
+                'Content-Length' => strlen($json),
             ]);
         } catch (\Throwable $e) {
             DB::rollBack();
