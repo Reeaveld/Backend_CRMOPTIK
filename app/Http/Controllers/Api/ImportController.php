@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Api;
 
+use App\Helpers\BpjsHelper;
 use App\Http\Controllers\Controller;
 use App\Models\Customer;
 use App\Models\FollowUpSchedule;
@@ -68,14 +69,15 @@ class ImportController extends Controller
         }
 
         // 2. Ekstraksi Baris Data Transaksi
+        $bpjsPrefixPattern = BpjsHelper::pattern();
         // Pola utama (Smalot Stream Order: Invoice, Biaya, Nama, Tanggal, Jenis Klaim)
-        $pattern1 = '/(0115[O00-9]006L\d{10,12})\s+([\d,.]+)\s*(.+?)\s*(\d{2}\/\d{2}\/\d{4})\s+Kacamata/i';
+        $pattern1 = '/(' . $bpjsPrefixPattern . '\d{10,12})\s+([\d,.]+)\s*(.+?)\s*(\d{2}\/\d{2}\/\d{4})\s+Kacamata/i';
         preg_match_all($pattern1, $text, $rawMatches, PREG_SET_ORDER);
 
         $isOrderInverted = true;
         // Fallback ke urutan visual layout standar jika stream pattern1 tidak menemukan data
         if (empty($rawMatches)) {
-            $pattern2 = '/(0115[O00-9]006L\d{10,12})\s+(\d{2}\/\d{2}\/\d{4})\s+(.+?)\s+Kacamata\s+([\d,.]+)/i';
+            $pattern2 = '/(' . $bpjsPrefixPattern . '\d{10,12})\s+(\d{2}\/\d{2}\/\d{4})\s+(.+?)\s+Kacamata\s+([\d,.]+)/i';
             preg_match_all($pattern2, $text, $rawMatches, PREG_SET_ORDER);
             $isOrderInverted = false;
         }
@@ -276,6 +278,7 @@ class ImportController extends Controller
                     'customer_id'      => $customer->id,
                     'invoice_number'   => $invoiceNumber,
                     'amount'           => (float) $item['amount'],
+                    'is_bpjs'          => true,
                     'status'           => 'done', // Klaim BPJS disepakati selesai
                     'notes'            => 'Klaim Kacamata BPJS' . ($fpk ? " (FPK: {$fpk})" : ''),
                     'transaction_date' => $transactionDate->toDateString(),

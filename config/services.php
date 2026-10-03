@@ -43,7 +43,8 @@ return [
     ],
 
     'bpjs' => [
-        'invoice_prefix' => env('BPJS_INVOICE_PREFIX', '01150006L'),
+        'invoice_prefix'  => env('BPJS_INVOICE_PREFIX', '01150006L'),
+        'invoice_pattern' => '0115[O00-9]006L', // Format klaim BPJS Optik Cengkareng (karakter ke-5 huruf O atau angka 0)
     ],
 
 ];

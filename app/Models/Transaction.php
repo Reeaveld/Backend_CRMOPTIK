@@ -10,10 +10,25 @@ class Transaction extends Model
         'customer_id',
         'invoice_number',
         'amount',
+        'is_bpjs',
         'status',
         'notes',
         'transaction_date'
     ];
+
+    protected $casts = [
+        'is_bpjs' => 'boolean',
+        'amount'  => 'float',
+    ];
+
+    protected static function booted()
+    {
+        static::creating(function ($transaction) {
+            if ($transaction->is_bpjs === null && !empty($transaction->invoice_number)) {
+                $transaction->is_bpjs = \App\Helpers\BpjsHelper::isBpjsInvoice($transaction->invoice_number);
+            }
+        });
+    }
 
     // Relasi ke Customer (Milik Siapa?)
     public function customer()

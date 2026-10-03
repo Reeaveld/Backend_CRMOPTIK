@@ -133,13 +133,10 @@ class DashboardController extends Controller
             ? "strftime('{$periodFormat}', transaction_date)"
             : "DATE_FORMAT(transaction_date, '{$periodFormat}')";
 
-        $bpjsPrefix = config('services.bpjs.invoice_prefix', '01150006L');
-        $escapedBpjsPrefix = str_replace(['\\', '%', '_'], ['\\\\', '\\%', '\\_'], $bpjsPrefix);
-
         $trendRows = DB::table('transactions')
             ->selectRaw("{$periodExpr} as period")
-            ->selectRaw("SUM(CASE WHEN invoice_number LIKE '%{$escapedBpjsPrefix}%' THEN amount ELSE 0 END) as bpjs")
-            ->selectRaw("SUM(CASE WHEN invoice_number NOT LIKE '%{$escapedBpjsPrefix}%' THEN amount ELSE 0 END) as non_bpjs")
+            ->selectRaw("SUM(CASE WHEN is_bpjs = 1 THEN amount ELSE 0 END) as bpjs")
+            ->selectRaw("SUM(CASE WHEN is_bpjs = 0 OR is_bpjs IS NULL THEN amount ELSE 0 END) as non_bpjs")
             ->selectRaw("SUM(amount) as total")
             ->whereBetween('transaction_date', [$from, $to])
             ->groupBy('period')

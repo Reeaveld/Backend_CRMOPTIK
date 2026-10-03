@@ -192,4 +192,33 @@ class DashboardTest extends TestCase
         $this->assertStringContainsString('Dewi Lestari', $response->streamedContent());
         $this->assertStringContainsString('INV-EXPORT-001', $response->streamedContent());
     }
+
+    public function test_bpjs_revenue_classification_with_letter_o_invoice(): void
+    {
+        $today = Carbon::now()->toDateString();
+
+        $customer = Customer::create([
+            'nama'  => 'Pasien BPJS Test',
+            'no_hp' => '081234567899',
+        ]);
+
+        Transaction::create([
+            'customer_id'      => $customer->id,
+            'invoice_number'   => '0115O006L24090001', // Catatan: karakter ke-5 adalah huruf O kapital sesuai PDF BPJS
+            'amount'           => 300000,
+            'status'           => 'done',
+            'transaction_date' => $today,
+        ]);
+
+        $response = $this->actingAs($this->user, 'sanctum')
+            ->getJson("/api/dashboard/stats?from={$today}&to={$today}");
+
+        $response->assertStatus(200);
+        $trend = $response->json('revenue_trend');
+        $this->assertNotEmpty($trend);
+        // Transaksi BPJS harus terhitung sebagai BPJS, bukan non_bpjs
+        $this->assertEquals(300000, $trend[0]['bpjs'], 'Transaksi dengan invoice 0115O006L harus terklasifikasi sebagai BPJS');
+        $this->assertEquals(0, $trend[0]['non_bpjs'], 'Transaksi BPJS tidak boleh masuk ke non_bpjs');
+    }
 }
+
