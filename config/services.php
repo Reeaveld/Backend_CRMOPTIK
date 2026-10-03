@@ -36,9 +36,10 @@ return [
     ],
 
     'fonnte' => [
-        'mode'      => env('FONNTE_MODE', 'dry_run'),       // 'dry_run' atau 'live'
-        'api_token' => env('FONNTE_API_TOKEN', ''),
-        'api_url'   => env('FONNTE_API_URL', 'https://api.fonnte.com/send'),
+        'mode'           => env('FONNTE_MODE', 'dry_run'),       // 'dry_run' atau 'live'
+        'api_token'      => env('FONNTE_API_TOKEN', ''),
+        'api_url'        => env('FONNTE_API_URL', 'https://api.fonnte.com/send'),
+        'pacing_seconds' => env('FONNTE_PACING_SECONDS', 2),     // Jeda anti-spam detik per pesan
     ],
 
     'bpjs' => [

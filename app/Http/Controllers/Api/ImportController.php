@@ -245,13 +245,16 @@ class ImportController extends Controller
 
                 $customerName = strtoupper(trim($item['customer_name']));
                 $phone = !empty($item['phone']) ? trim($item['phone']) : null;
+                $transactionDate = Carbon::parse($item['transaction_date']);
 
                 // 1. Simpan atau perbarui Customer
                 $customer = Customer::where('nama', $customerName)->first();
                 if (!$customer) {
                     $customer = Customer::create([
-                        'nama'  => $customerName,
-                        'no_hp' => $phone,
+                        'nama'       => $customerName,
+                        'no_hp'      => $phone,
+                        'created_at' => $transactionDate,
+                        'updated_at' => $transactionDate,
                     ]);
                     $customersCreated++;
                 } else {
@@ -269,7 +272,6 @@ class ImportController extends Controller
                 }
 
                 // 2. Simpan Transaksi
-                $transactionDate = Carbon::parse($item['transaction_date']);
                 $transaction = Transaction::create([
                     'customer_id'      => $customer->id,
                     'invoice_number'   => $invoiceNumber,

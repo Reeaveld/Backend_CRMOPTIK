@@ -112,6 +112,15 @@ class RunFollowUpBlast extends Command
                     'type'        => $schedule->type,
                 ]);
             }
+
+            // Anti-spam pacing: Beri jeda antar pengiriman pada mode LIVE
+            // untuk menghindari deteksi bot/spam massal oleh algoritma Meta WhatsApp
+            if (config('services.fonnte.mode') === 'live' && !app()->environment('testing')) {
+                $pacingSeconds = (int) config('services.fonnte.pacing_seconds', 2);
+                if ($pacingSeconds > 0) {
+                    sleep($pacingSeconds);
+                }
+            }
         }
 
         // Ringkasan

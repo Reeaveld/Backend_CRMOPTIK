@@ -7,6 +7,7 @@ use App\Http\Controllers\Api\CustomerController;
 use App\Http\Controllers\Api\TransactionController;
 use App\Http\Controllers\Api\ImportController;
 use App\Http\Controllers\Api\AuthController;
+use App\Http\Controllers\Api\DashboardController;
 use App\Models\FollowUpSchedule;
 
 // =====================================================================
@@ -57,6 +58,11 @@ Route::middleware(['auth:sanctum', 'throttle:60,1'])->group(function () {
     });
 
     Route::post('/logout', [AuthController::class, 'logout']);
+
+    // Dashboard Analytics & Reports
+    Route::get('/dashboard/stats', [DashboardController::class, 'stats']);
+    Route::get('/customers/search', [DashboardController::class, 'searchByDate']);
+    Route::get('/dashboard/export', [DashboardController::class, 'exportCsv']);
 
     // Customers CRUD & Profile Completion
     Route::apiResource('customers', CustomerController::class);
