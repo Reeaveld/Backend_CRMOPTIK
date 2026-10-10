@@ -148,9 +148,14 @@ class RunFollowUpBlast extends Command
                 . "Bagaimana kondisi kacamata/lensa Anda? Apakah sudah nyaman digunakan? "
                 . "Jika ada keluhan, silakan hubungi kami. Terima kasih! 🙏",
 
-            FollowUpSchedule::TYPE_H_PLUS_330 => "Halo {$customerName}, sudah hampir setahun sejak transaksi terakhir Anda di Optik RS Cengkareng (Invoice: {$invoice}). "
-                . "Kami menyarankan pemeriksaan mata rutin setiap 12 bulan untuk menjaga kesehatan penglihatan Anda. "
-                . "Silakan kunjungi kami untuk pemeriksaan gratis. Terima kasih! 👁️",
+            FollowUpSchedule::TYPE_H_PLUS_330 => ($schedule->transaction?->is_bpjs)
+                ? "Halo {$customerName}, sudah hampir setahun sejak transaksi klaim kacamata BPJS Anda di Optik RS Cengkareng (Invoice: {$invoice}). "
+                    . "Sebagai pengingat kesehatan, periksa kondisi mata Anda secara berkala. "
+                    . "Perlu diketahui bahwa hak klaim kacamata BPJS berikutnya berlaku minimal 2 tahun (730 hari) sekali. "
+                    . "Jika ada pertanyaan atau ingin periksa kenyamanan kacamata, silakan hubungi kami. Terima kasih! 👁️"
+                : "Halo {$customerName}, sudah hampir setahun sejak transaksi terakhir Anda di Optik RS Cengkareng (Invoice: {$invoice}). "
+                    . "Kami menyarankan pemeriksaan mata rutin setiap 12 bulan untuk menjaga kesehatan penglihatan Anda. "
+                    . "Silakan kunjungi kami jika ingin melakukan evaluasi ulang kenyamanan penglihatan. Terima kasih! 👁️",
 
             default => "Halo {$customerName}, ini adalah pesan pengingat dari Optik RS Cengkareng. Terima kasih atas kunjungan Anda!",
         };

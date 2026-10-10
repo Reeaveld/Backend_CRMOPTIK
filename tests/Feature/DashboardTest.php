@@ -115,6 +115,8 @@ class DashboardTest extends TestCase
                     'complete_profiles_count',
                     'incomplete_profiles_count',
                     'reachability_rate',
+                    'repeat_customers_count',
+                    'repeat_purchase_rate',
                 ],
                 'revenue_trend',
                 'followup_distribution',

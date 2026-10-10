@@ -107,6 +107,20 @@ class DashboardController extends Controller
         $incompleteProfilesCount = $totalCustomers - $completeProfilesCount;
         $reachabilityRate = $totalCustomers > 0 ? round(($completeProfilesCount / $totalCustomers) * 100, 1) : 0.0;
 
+        // Repeat Purchase Rate: Pelanggan yang memiliki lebih dari 1 transaksi (Rumusan Masalah 3)
+        $repeatCustomersCount = DB::table('transactions')
+            ->select('customer_id')
+            ->groupBy('customer_id')
+            ->havingRaw('COUNT(*) > 1')
+            ->get()
+            ->count();
+        $customersWithTransactionsCount = DB::table('transactions')
+            ->distinct('customer_id')
+            ->count('customer_id');
+        $repeatPurchaseRate = $customersWithTransactionsCount > 0
+            ? round(($repeatCustomersCount / $customersWithTransactionsCount) * 100, 1)
+            : 0.0;
+
         $kpi = [
             'total_customers'          => $totalCustomers,
             'new_customers_period'     => $newCustomersPeriod,
@@ -121,6 +135,8 @@ class DashboardController extends Controller
             'complete_profiles_count'  => $completeProfilesCount,
             'incomplete_profiles_count'=> $incompleteProfilesCount,
             'reachability_rate'        => $reachabilityRate,
+            'repeat_customers_count'   => $repeatCustomersCount,
+            'repeat_purchase_rate'     => $repeatPurchaseRate,
         ];
 
         // 2. Revenue Trend

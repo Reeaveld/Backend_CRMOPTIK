@@ -12,8 +12,9 @@ return Application::configure(basePath: dirname(__DIR__))
         health: '/up',
     )
     ->withMiddleware(function (Middleware $middleware): void {
-        // Percayai semua reverse proxy (Cloudflare, cPanel, Nginx) agar HTTPS & IP client terdeteksi akurat
-        $middleware->trustProxies(at: '*');
+        // Percayai reverse proxy yang dikonfigurasi melalui environment variable
+        $trustedProxies = env('TRUSTED_PROXIES', '*');
+        $middleware->trustProxies(at: $trustedProxies === '*' ? '*' : explode(',', $trustedProxies));
     })
     ->withExceptions(function (Exceptions $exceptions): void {
         //

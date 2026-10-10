@@ -15,30 +15,16 @@ use App\Models\FollowUpSchedule;
 // =====================================================================
 Route::get('/health', function () {
     $dbOk = false;
-    $dbError = null;
 
     try {
         DB::connection()->getPdo();
         $dbOk = true;
     } catch (\Throwable $e) {
-        $dbError = $e->getMessage();
+        \Illuminate\Support\Facades\Log::error('Health check DB connection error: ' . $e->getMessage());
     }
 
-    // Cek aktivitas terakhir follow up blast
-    $lastSent = FollowUpSchedule::whereNotNull('sent_at')->latest('sent_at')->value('sent_at');
-
     return response()->json([
-        'status'         => $dbOk ? 'healthy' : 'degraded',
-        'app_name'       => config('app.name'),
-        'timezone'       => config('app.timezone'),
-        'server_time'    => now()->toDateTimeString(),
-        'database'       => [
-            'connected' => $dbOk,
-            'driver'    => DB::connection()->getDriverName(),
-            'error'     => $dbError,
-        ],
-        'fonnte_mode'    => config('services.fonnte.mode'),
-        'last_followup'  => $lastSent ? $lastSent->toDateTimeString() : null,
+        'status' => $dbOk ? 'healthy' : 'degraded',
     ], $dbOk ? 200 : 503);
 });
 

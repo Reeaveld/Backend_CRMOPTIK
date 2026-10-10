@@ -11,20 +11,19 @@ class SecurityAndHealthTest extends TestCase
 {
     use RefreshDatabase;
 
-    public function test_health_endpoint_returns_ok_with_jakarta_timezone(): void
+    public function test_health_endpoint_returns_minimal_public_status(): void
     {
         $response = $this->getJson('/api/health');
 
         $response->assertStatus(200)
             ->assertJson([
-                'status'   => 'healthy',
-                'timezone' => 'Asia/Jakarta',
+                'status' => 'healthy',
             ])
-            ->assertJsonStructure([
-                'status',
-                'timezone',
-                'server_time',
-                'database' => ['connected', 'driver'],
+            ->assertJsonMissing([
+                'database',
+                'error',
+                'driver',
+                'fonnte_mode',
             ]);
     }
 
