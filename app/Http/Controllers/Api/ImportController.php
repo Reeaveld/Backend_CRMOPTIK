@@ -7,6 +7,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Customer;
 use App\Models\FollowUpSchedule;
 use App\Models\Transaction;
+use App\Services\FollowUpPlanner;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -152,8 +153,10 @@ class ImportController extends Controller
      * 3. FollowUpSchedule: Otomatis buat jadwal H+3 dan H+330 (status pending jika no HP valid,
      *    atau blocked_incomplete_profile jika kosong).
      */
-    public function commitBpjs(Request $request)
+    public function commitBpjs(Request $request, ?FollowUpPlanner $planner = null)
     {
+        $planner ??= app(FollowUpPlanner::class);
+
         $validated = $request->validate([
             'nomor_fpk'               => 'nullable|string|max:50',
             'items'                   => 'required|array|min:1|max:' . self::MAX_COMMIT_ITEMS,
@@ -234,31 +237,17 @@ class ImportController extends Controller
                     ? FollowUpSchedule::STATUS_PENDING
                     : FollowUpSchedule::STATUS_BLOCKED;
 
+                // Jadwal sesuai config/followup.php (saat ini H+3 dan H+330)
+                $created = $planner->createFor($transaction, $transactionDate, $initialStatus, [
+                    FollowUpSchedule::TYPE_H_PLUS_3   => 'Follow-up H+3 Klaim Kacamata BPJS',
+                    FollowUpSchedule::TYPE_H_PLUS_330 => 'Follow-up H+330 Pengingat Hak Klaim BPJS Tahunan',
+                ]);
+
                 if ($initialStatus === FollowUpSchedule::STATUS_PENDING) {
-                    $schedulesPending += 2;
+                    $schedulesPending += $created;
                 } else {
-                    $schedulesBlocked += 2;
+                    $schedulesBlocked += $created;
                 }
-
-                // H+3: Cek kepuasan kacamata baru (3 hari setelah transaksi)
-                FollowUpSchedule::create([
-                    'customer_id'    => $customer->id,
-                    'transaction_id' => $transaction->id,
-                    'type'           => FollowUpSchedule::TYPE_H_PLUS_3,
-                    'scheduled_date' => $transactionDate->copy()->addDays(3),
-                    'status'         => $initialStatus,
-                    'notes'          => 'Follow-up H+3 Klaim Kacamata BPJS',
-                ]);
-
-                // H+330: Pengingat hak klaim kacamata BPJS tahunan (11 bulan / 330 hari)
-                FollowUpSchedule::create([
-                    'customer_id'    => $customer->id,
-                    'transaction_id' => $transaction->id,
-                    'type'           => FollowUpSchedule::TYPE_H_PLUS_330,
-                    'scheduled_date' => $transactionDate->copy()->addDays(330),
-                    'status'         => $initialStatus,
-                    'notes'          => 'Follow-up H+330 Pengingat Hak Klaim BPJS Tahunan',
-                ]);
 
                 $importedCount++;
             }
