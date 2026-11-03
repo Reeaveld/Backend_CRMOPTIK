@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Customer;
 use App\Models\FollowUpSchedule;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Validator;
 
 class CustomerController extends Controller
@@ -14,6 +15,17 @@ class CustomerController extends Controller
     public function index()
     {
         return response()->json(Customer::latest()->get());
+    }
+
+    // GET /api/customers/{id}
+    public function show($id)
+    {
+        $customer = Customer::find($id);
+        if (!$customer) {
+            return response()->json(['message' => 'Customer not found'], 404);
+        }
+
+        return response()->json($customer);
     }
 
     // Android: POST /api/customers
@@ -130,6 +142,43 @@ class CustomerController extends Controller
                           ? " dan {$unblockedCount} jadwal follow-up diaktifkan."
                           : '.'),
             'data'    => $customer->fresh(),  // Reload agar is_profile_complete ter-update
+        ]);
+    }
+
+    /**
+     * DELETE /api/customers/{id}
+     *
+     * Soft delete customer (rekam histori dipertahankan) dan membatalkan jadwal
+     * follow-up yang belum terkirim (status 'cancelled', bukan 'failed').
+     */
+    public function destroy($id)
+    {
+        $customer = Customer::find($id);
+        if (!$customer) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Customer tidak ditemukan',
+            ], 404);
+        }
+
+        // Batalkan jadwal follow-up yang masih pending atau terblokir
+        DB::transaction(function () use ($customer, $id) {
+            FollowUpSchedule::where('customer_id', $id)
+                ->whereIn('status', [
+                    FollowUpSchedule::STATUS_PENDING,
+                    FollowUpSchedule::STATUS_BLOCKED,
+                ])
+                ->update([
+                    'status' => FollowUpSchedule::STATUS_CANCELLED,
+                    'notes'  => 'Dibatalkan: Pelanggan telah dihapus oleh admin.',
+                ]);
+
+            $customer->delete();
+        });
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Customer berhasil dihapus',
         ]);
     }
 }
