@@ -111,12 +111,18 @@ class DashboardTest extends TestCase
                     'transactions_count_prev',
                     'followup_sent',
                     'followup_total',
-                    'delivery_rate',
+                    'queued_rate',
+                    'followup_failed',
+                    'followup_pending',
+                    'followup_blocked',
+                    'active_customers_count',
                     'complete_profiles_count',
                     'incomplete_profiles_count',
                     'reachability_rate',
                     'repeat_customers_count',
                     'repeat_purchase_rate',
+                    'returning_customers_count',
+                    'returning_customer_rate',
                 ],
                 'revenue_trend',
                 'followup_distribution',
@@ -132,7 +138,10 @@ class DashboardTest extends TestCase
         $this->assertEquals(350000, $response->json('kpi.revenue'));
         $this->assertEquals(1, $response->json('kpi.followup_sent'));
         $this->assertEquals(2, $response->json('kpi.followup_total'));
-        $this->assertEquals(50.0, $response->json('kpi.delivery_rate'));
+        // 1 sent, 0 failed jatuh tempo; blocked tidak masuk penyebut
+        $this->assertEquals(100.0, $response->json('kpi.queued_rate'));
+        $this->assertEquals(1, $response->json('kpi.followup_blocked'));
+        $this->assertArrayNotHasKey('delivery_rate', $response->json('kpi'));
     }
 
     public function test_customer_search_by_date(): void

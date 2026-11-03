@@ -73,6 +73,7 @@ Route::middleware(['auth:sanctum', 'throttle:60,1'])->group(function () {
 
     // Dashboard Analytics & Reports
     Route::get('/dashboard/stats', [DashboardController::class, 'stats']);
+    Route::get('/dashboard/retention', [DashboardController::class, 'retention']);
     Route::get('/customers/search', [DashboardController::class, 'searchByDate']);
     Route::get('/dashboard/export', [DashboardController::class, 'exportCsv']);
 

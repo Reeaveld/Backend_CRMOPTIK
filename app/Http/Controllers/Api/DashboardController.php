@@ -7,6 +7,7 @@ use App\Models\Customer;
 use App\Models\FollowUpSchedule;
 use App\Models\Transaction;
 use App\Models\TransactionPrescription;
+use App\Services\RetentionMetrics;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -21,7 +22,7 @@ class DashboardController extends Controller
      * Mengembalikan KPI, Tren Pendapatan, Distribusi Follow-Up, Pertumbuhan Pelanggan,
      * Distribusi Jenis Lensa, dan Distribusi Kelainan Refraksi.
      */
-    public function stats(Request $request)
+    public function stats(Request $request, RetentionMetrics $metrics)
     {
         $from = $request->query('from', Carbon::now()->startOfMonth()->toDateString());
         $to = $request->query('to', Carbon::now()->toDateString());
@@ -91,7 +92,10 @@ class DashboardController extends Controller
         $followupTotal = FollowUpSchedule::whereDate('scheduled_date', '>=', $from)
             ->whereDate('scheduled_date', '<=', $to)
             ->count();
-        $deliveryRate = $followupTotal > 0 ? round(($followupSent / $followupTotal) * 100, 1) : 0.0;
+
+        // "sent" = diterima antrean Fonnte (bukan terkirim). queued_rate hanya memakai jadwal
+        // jatuh tempo berstatus sent/failed; pending, blocked, cancelled dilaporkan terpisah.
+        $queue = $metrics->queueMetrics($from, $to);
 
         // Reachability: pelanggan dengan nomor HP valid
         // Dihitung langsung di level SQL (menghindari memory bomb Customer::all())
@@ -107,19 +111,9 @@ class DashboardController extends Controller
         $incompleteProfilesCount = $totalCustomers - $completeProfilesCount;
         $reachabilityRate = $totalCustomers > 0 ? round(($completeProfilesCount / $totalCustomers) * 100, 1) : 0.0;
 
-        // Repeat Purchase Rate: Pelanggan yang memiliki lebih dari 1 transaksi (Rumusan Masalah 3)
-        $repeatCustomersCount = DB::table('transactions')
-            ->select('customer_id')
-            ->groupBy('customer_id')
-            ->havingRaw('COUNT(*) > 1')
-            ->get()
-            ->count();
-        $customersWithTransactionsCount = DB::table('transactions')
-            ->distinct('customer_id')
-            ->count('customer_id');
-        $repeatPurchaseRate = $customersWithTransactionsCount > 0
-            ? round(($repeatCustomersCount / $customersWithTransactionsCount) * 100, 1)
-            : 0.0;
+        // Rumusan Masalah 3 (definisi: docs/METRICS.md), dihitung pada rentang [from, to]
+        // dengan agregasi SQL. null = tidak ada pelanggan aktif pada rentang (bukan 0%).
+        $purchase = $metrics->purchaseMetrics($from, $to);
 
         $kpi = [
             'total_customers'          => $totalCustomers,
@@ -131,12 +125,19 @@ class DashboardController extends Controller
             'transactions_count_prev'  => $transactionsCountPrev,
             'followup_sent'            => $followupSent,
             'followup_total'           => $followupTotal,
-            'delivery_rate'            => $deliveryRate,
+            'queued_rate'              => $queue['queued_rate'],
+            'followup_failed'          => $queue['failed'],
+            'followup_pending'         => $queue['pending'],
+            'followup_blocked'         => $queue['blocked'],
+            'followup_simulated'       => $queue['sent_simulated'],
             'complete_profiles_count'  => $completeProfilesCount,
             'incomplete_profiles_count'=> $incompleteProfilesCount,
             'reachability_rate'        => $reachabilityRate,
-            'repeat_customers_count'   => $repeatCustomersCount,
-            'repeat_purchase_rate'     => $repeatPurchaseRate,
+            'active_customers_count'   => $purchase['active_customers'],
+            'repeat_customers_count'   => $purchase['repeat_customers'],
+            'repeat_purchase_rate'     => $purchase['repeat_purchase_rate'],
+            'returning_customers_count'=> $purchase['returning_customers'],
+            'returning_customer_rate'  => $purchase['returning_customer_rate'],
         ];
 
         // 2. Revenue Trend
@@ -308,6 +309,59 @@ class DashboardController extends Controller
             'customer_growth'         => $customerGrowth,
             'lens_distribution'       => $lensDistribution,
             'refraction_distribution' => $refractionDistribution,
+        ]);
+    }
+
+    /**
+     * GET /api/dashboard/retention
+     *
+     * Metrik evaluasi Rumusan Masalah 3 (definisi: docs/METRICS.md).
+     * Query: from, to (YYYY-MM-DD; default 90 hari terakhir), return_days (30|60|90),
+     * go_live_date (YYYY-MM-DD; default config crm.go_live_date), window_days (default 90).
+     */
+    public function retention(Request $request, RetentionMetrics $metrics)
+    {
+        $validated = $request->validate([
+            'from'         => 'nullable|date_format:Y-m-d',
+            'to'           => 'nullable|date_format:Y-m-d|after_or_equal:from',
+            'return_days'  => 'nullable|integer|in:30,60,90',
+            'go_live_date' => 'nullable|date_format:Y-m-d',
+            'window_days'  => 'nullable|integer|min:7|max:365',
+        ]);
+
+        $to = $validated['to'] ?? Carbon::today()->toDateString();
+        $from = $validated['from'] ?? Carbon::parse($to)->subDays(89)->toDateString();
+        $returnDays = (int) ($validated['return_days'] ?? config('crm.followup_return_days', 30));
+        $goLive = $validated['go_live_date'] ?? config('crm.go_live_date');
+        $windowDays = (int) ($validated['window_days'] ?? config('crm.comparison_window_days', 90));
+
+        $segments = [
+            RetentionMetrics::SEGMENT_ALL,
+            RetentionMetrics::SEGMENT_BPJS,
+            RetentionMetrics::SEGMENT_NON_BPJS,
+        ];
+
+        $purchase = [];
+        $beforeAfter = [];
+        foreach ($segments as $segment) {
+            $purchase[$segment] = $metrics->purchaseMetrics($from, $to, $segment);
+            $beforeAfter[$segment] = $metrics->beforeAfter($goLive, $windowDays, $segment);
+        }
+
+        return response()->json([
+            'date_range'      => ['from' => $from, 'to' => $to],
+            'purchase'        => $purchase,
+            'followup_queue'  => $metrics->queueMetrics($from, $to),
+            'followup_return' => $metrics->followUpReturn($from, $to, $returnDays),
+            'before_after'    => $beforeAfter[RetentionMetrics::SEGMENT_ALL] === null ? null : $beforeAfter,
+            'engagement'      => [
+                'available' => false,
+                'reason'    => 'Pesan masuk (balasan pelanggan) tidak tersedia; sistem hanya mengirim satu arah.',
+            ],
+            'notes'           => [
+                'BPJS: siklus klaim minimal 2 tahun (Permenkes 28/2014), RPR BPJS pada jendela pendek mendekati nol.',
+                'queued_rate adalah rasio pesan diterima antrean, bukan terkirim ke pelanggan.',
+            ],
         ]);
     }
 
