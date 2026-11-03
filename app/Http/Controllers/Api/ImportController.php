@@ -15,6 +15,9 @@ use Smalot\PdfParser\Parser;
 
 class ImportController extends Controller
 {
+    /** Batas atas jumlah item per commit (satu berkas FPK bulanan ~141 baris). */
+    private const MAX_COMMIT_ITEMS = 500;
+
     /**
      * TAHAP 1: PARSE & PREVIEW (STATELESS)
      * POST /api/import/bpjs/parse
@@ -44,88 +47,21 @@ class ImportController extends Controller
             ], 422);
         }
 
-        // 1. Ekstraksi Header Metadata
-        $headerSection = strstr($text, 'NO TRANSAKSI', true) ?: substr($text, 0, 1500);
-
-        preg_match('/(L\d{13})/i', $headerSection, $fpkMatch);
-        preg_match('/OPTIK\s+[^\r\n]+/i', $headerSection, $providerMatch);
-        preg_match('/(January|February|March|April|May|June|July|August|September|October|November|December),\s*\d{4}/i', $headerSection, $bulanMatch);
-
-        $fpkNumber = $fpkMatch[1] ?? null;
-        $provider = trim($providerMatch[0] ?? 'Optik CRM');
-        $bulanPelayanan = trim($bulanMatch[0] ?? '');
-
-        $headerTotalData = null;
-        $headerTotalTagihan = null;
-
-        // Cek format stream Smalot (kolom angka terpisah baris baru sebelum "BPJS Kesehatan")
-        if (preg_match('/(\d+)\s*\n([\d,]+)\s*\nBPJS/i', $headerSection, $streamTotals)) {
-            $headerTotalData = (int) $streamTotals[1];
-            $headerTotalTagihan = (float) str_replace(',', '', $streamTotals[2]);
-        } elseif (preg_match('/Total\s+Data\s*[:\s]+(\d+)/i', $headerSection, $tdMatch) &&
-                  preg_match('/Total\s+Tagihan\s*[:\s]+([\d,.]+)/i', $headerSection, $ttMatch)) {
-            $headerTotalData = (int) $tdMatch[1];
-            $headerTotalTagihan = (float) str_replace(',', '', $ttMatch[1]);
-        }
-
-        // 2. Ekstraksi Baris Data Transaksi
-        $bpjsPrefixPattern = BpjsHelper::pattern();
-        // Pola utama (Smalot Stream Order: Invoice, Biaya, Nama, Tanggal, Jenis Klaim)
-        $pattern1 = '/(' . $bpjsPrefixPattern . '\d{10,12})\s+([\d,.]+)\s*(.+?)\s*(\d{2}\/\d{2}\/\d{4})\s+Kacamata/i';
-        preg_match_all($pattern1, $text, $rawMatches, PREG_SET_ORDER);
-
-        $isOrderInverted = true;
-        // Fallback ke urutan visual layout standar jika stream pattern1 tidak menemukan data
-        if (empty($rawMatches)) {
-            $pattern2 = '/(' . $bpjsPrefixPattern . '\d{10,12})\s+(\d{2}\/\d{2}\/\d{4})\s+(.+?)\s+Kacamata\s+([\d,.]+)/i';
-            preg_match_all($pattern2, $text, $rawMatches, PREG_SET_ORDER);
-            $isOrderInverted = false;
-        }
-
-        if (empty($rawMatches)) {
+        // Ekstraksi Metadata & Baris Data Transaksi BPJS via BpjsPdfTextParser
+        $parseResult = \App\Services\BpjsPdfTextParser::parse($text);
+        if (!$parseResult['success']) {
             return response()->json([
                 'success' => false,
-                'message' => 'Format tabel klaim BPJS tidak dikenali atau tidak ada data yang cocok dengan pola invoice.',
+                'message' => $parseResult['message'],
             ], 422);
         }
 
-        // 3. Kumpulkan Invoices dan Names untuk query efisien ke DB (mencegah N+1)
-        $extractedInvoices = [];
-        $extractedNames = [];
-        $parsedRows = [];
+        $metadata = $parseResult['metadata'];
+        $parsedRows = $parseResult['rows'];
 
-        foreach ($rawMatches as $index => $match) {
-            $invoice = trim($match[1]);
-            if ($isOrderInverted) {
-                $amount = (float) str_replace(',', '', $match[2]);
-                $customerName = strtoupper(trim($match[3]));
-                $dateRaw = trim($match[4]);
-            } else {
-                $dateRaw = trim($match[2]);
-                $customerName = strtoupper(trim($match[3]));
-                $amount = (float) str_replace(',', '', $match[4]);
-            }
-
-            // Normalisasi tanggal
-            $formattedDate = null;
-            try {
-                $formattedDate = Carbon::createFromFormat('d/m/Y', $dateRaw)->toDateString();
-            } catch (\Throwable $e) {
-                $formattedDate = Carbon::now()->toDateString();
-            }
-
-            $extractedInvoices[] = $invoice;
-            $extractedNames[] = $customerName;
-
-            $parsedRows[] = [
-                'temp_id'          => $index + 1,
-                'invoice_number'   => $invoice,
-                'transaction_date' => $formattedDate,
-                'customer_name'    => $customerName,
-                'claim_type'       => 'Kacamata',
-                'amount'           => $amount,
-            ];
-        }
+        // Kumpulkan Invoices dan Names untuk query efisien ke DB (mencegah N+1)
+        $extractedInvoices = array_column($parsedRows, 'invoice_number');
+        $extractedNames = array_column($parsedRows, 'customer_name');
 
         // 4. Cek Database untuk Duplikasi & Customer Lama
         $existingInvoices = Transaction::whereIn('invoice_number', $extractedInvoices)
@@ -141,16 +77,15 @@ class ImportController extends Controller
 
         // 5. Rakit Item Response dengan Status Duplikasi dan Sugesti No HP
         $items = [];
-        $totalAmountParsed = 0;
         $duplicateCount = 0;
 
         foreach ($parsedRows as $row) {
             $inv = $row['invoice_number'];
             $cName = $row['customer_name'];
             $amt = $row['amount'];
-            $totalAmountParsed += $amt;
 
-            $isDuplicate = isset($existingInvoices[$inv]);
+            // Duplikat terhadap DB, atau kemunculan ke-2 dst. dalam berkas yang sama
+            $isDuplicate = isset($existingInvoices[$inv]) || ($row['duplicate_in_file'] ?? false);
             if ($isDuplicate) {
                 $duplicateCount++;
             }
@@ -175,27 +110,30 @@ class ImportController extends Controller
             ];
         }
 
-        $totalParsed = count($items);
-        $isCountVerified = ($headerTotalData !== null) ? ($totalParsed === $headerTotalData) : true;
-        $isAmountVerified = ($headerTotalTagihan !== null) ? (abs($totalAmountParsed - $headerTotalTagihan) < 1) : true;
+        // Verifikasi header (is_verified) sudah dihitung oleh BpjsPdfTextParser.
+        $metadata['duplicate_count'] = $duplicateCount;
 
-        $responseData = [
-            'success'  => true,
-            'metadata' => [
-                'nomor_fpk'            => $fpkNumber,
-                'provider'             => $provider,
-                'bulan_pelayanan'      => $bulanPelayanan,
-                'total_data_header'    => $headerTotalData,
-                'total_tagihan_header' => $headerTotalTagihan,
-                'total_parsed'         => $totalParsed,
-                'total_amount_parsed'  => $totalAmountParsed,
-                'duplicate_count'      => $duplicateCount,
-                'is_verified'          => ($isCountVerified && $isAmountVerified),
-            ],
-            'items'    => $items,
-        ];
+        return $this->jsonResponse([
+            'success'      => true,
+            'metadata'     => $metadata,
+            'items'        => $items,
+            'skipped_rows' => $parseResult['skipped_rows'] ?? [],
+        ]);
+    }
 
-        $json = json_encode($responseData, JSON_UNESCAPED_UNICODE);
+    /**
+     * Respons JSON. Header Content-Length manual adalah tambalan untuk server dev
+     * (`php artisan serve`) yang memotong payload besar (commit 25093ee). Pada server
+     * produksi dengan kompresi, header manual berpotensi bentrok; matikan lewat
+     * IMPORT_FORCE_CONTENT_LENGTH=false dan uji (lihat DEPLOYMENT.md, BE-8).
+     */
+    private function jsonResponse(array $data)
+    {
+        if (!config('app.import_force_content_length', true)) {
+            return response()->json($data);
+        }
+
+        $json = json_encode($data, JSON_UNESCAPED_UNICODE);
 
         return response($json, 200, [
             'Content-Type'   => 'application/json',
@@ -217,13 +155,20 @@ class ImportController extends Controller
     public function commitBpjs(Request $request)
     {
         $validated = $request->validate([
-            'nomor_fpk'               => 'nullable|string',
-            'items'                   => 'required|array|min:1',
-            'items.*.invoice_number'  => 'required|string',
-            'items.*.transaction_date'=> 'required|date',
-            'items.*.customer_name'   => 'required|string',
-            'items.*.amount'          => 'required|numeric',
-            'items.*.phone'           => 'nullable|string',
+            'nomor_fpk'               => 'nullable|string|max:50',
+            'items'                   => 'required|array|min:1|max:' . self::MAX_COMMIT_ITEMS,
+            'items.*.invoice_number'  => [
+                'required', 'string', 'max:50',
+                function ($attribute, $value, $fail) {
+                    if (!BpjsHelper::isBpjsInvoice($value)) {
+                        $fail('Format nomor invoice BPJS tidak valid.');
+                    }
+                },
+            ],
+            'items.*.transaction_date'=> 'required|date|after_or_equal:2020-01-01|before_or_equal:today',
+            'items.*.customer_name'   => 'required|string|max:255',
+            'items.*.amount'          => 'required|numeric|min:0',
+            'items.*.phone'           => 'nullable|string|max:30',
         ]);
 
         $fpk = $validated['nomor_fpk'] ?? null;
@@ -330,12 +275,7 @@ class ImportController extends Controller
                 'schedules_blocked' => $schedulesBlocked,
             ];
 
-            $json = json_encode($commitResult, JSON_UNESCAPED_UNICODE);
-
-            return response($json, 200, [
-                'Content-Type'   => 'application/json',
-                'Content-Length' => strlen($json),
-            ]);
+            return $this->jsonResponse($commitResult);
         } catch (\Throwable $e) {
             DB::rollBack();
             Log::error('commitBpjs: Rollback terjadi', ['err' => $e->getMessage()]);
@@ -353,7 +293,7 @@ class ImportController extends Controller
     public function importBpjs(Request $request)
     {
         $parseResponse = $this->parseBpjs($request);
-        $data = $parseResponse->getData(true);
+        $data = json_decode($parseResponse->getContent(), true);
 
         if (!$data['success']) {
             return $parseResponse;
