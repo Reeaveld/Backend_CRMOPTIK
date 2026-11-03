@@ -6,8 +6,11 @@ use App\Http\Controllers\Controller;
 use App\Models\Customer;
 use App\Models\FollowUpSchedule;
 use Illuminate\Http\Request;
+use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Validator;
+use Illuminate\Support\Str;
+use Illuminate\Validation\Rule;
 
 class CustomerController extends Controller
 {
@@ -15,6 +18,28 @@ class CustomerController extends Controller
     public function index()
     {
         return response()->json(Customer::latest()->get());
+    }
+
+    /**
+     * Respons untuk client_uuid yang sudah ada: 200 + data lama (bukan 201 agar jelas replay).
+     * Pelanggan yang sudah dihapus di server dijawab 409 supaya klien tidak mengikat
+     * remoteId ke baris yang sudah tidak aktif.
+     */
+    private function replayByClientUuid(string $clientUuid)
+    {
+        $existing = Customer::withTrashed()->where('client_uuid', $clientUuid)->first();
+        if (!$existing) {
+            return null;
+        }
+
+        if ($existing->trashed()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Pelanggan ini sudah dihapus di server.',
+            ], 409);
+        }
+
+        return response()->json($existing, 200);
     }
 
     // GET /api/customers/{id}
@@ -31,18 +56,48 @@ class CustomerController extends Controller
     // Android: POST /api/customers
     public function store(Request $request)
     {
+        // Idempotensi (outbox Android): bila client_uuid sudah pernah diterima, kembalikan
+        // baris yang sama. Harus diperiksa SEBELUM validasi unique no_hp, karena pengulangan
+        // request yang sama akan bentrok dengan no_hp yang disimpan oleh percobaan pertama.
+        $clientUuid = $request->input('client_uuid');
+        if (is_string($clientUuid) && Str::isUuid($clientUuid)) {
+            $replay = $this->replayByClientUuid($clientUuid);
+            if ($replay) {
+                return $replay;
+            }
+        }
+
         // Validasi input
         $validated = $request->validate([
-            'nama' => 'required|string',
-            'no_hp' => 'required|string|unique:customers,no_hp',
+            'client_uuid' => 'nullable|uuid',
+            'nama' => 'required|string|max:255',
+            'no_hp' => [
+                'required', 'string', 'max:30',
+                // Pelanggan yang sudah di-soft-delete tidak boleh memblokir nomor yang sama
+                Rule::unique('customers', 'no_hp')->whereNull('deleted_at'),
+            ],
+        ], [
+            'no_hp.unique' => 'Nomor HP sudah terdaftar pada pelanggan lain!',
         ]);
 
         // Simpan ke MySQL
-        $customer = Customer::create([
-            'nama' => $validated['nama'],
-            'no_hp' => $validated['no_hp'],
-            // Field lain pakai default dulu
-        ]);
+        try {
+            $customer = Customer::create([
+                'client_uuid' => $validated['client_uuid'] ?? null,
+                'nama' => $validated['nama'],
+                'no_hp' => $validated['no_hp'],
+                // Field lain pakai default dulu
+            ]);
+        } catch (QueryException $e) {
+            // Dua request dengan client_uuid sama berlomba: yang kalah mengambil baris pemenang
+            if (!empty($validated['client_uuid'])) {
+                $replay = $this->replayByClientUuid($validated['client_uuid']);
+                if ($replay) {
+                    return $replay;
+                }
+            }
+            throw $e;
+        }
 
         return response()->json($customer, 201);
     }
@@ -60,7 +115,10 @@ class CustomerController extends Controller
         $validator = Validator::make($request->all(), [
             'nama'         => 'required|string|max:255',
             // Wajib unik di kolom no_hp, KECUALI baris customer ini sendiri
-            'no_hp'        => 'required|string|max:30|unique:customers,no_hp,' . $id,
+            'no_hp'        => [
+                'required', 'string', 'max:30',
+                Rule::unique('customers', 'no_hp')->ignore($id)->whereNull('deleted_at'),
+            ],
             'jenis_lensa'  => 'nullable|string|max:50',
             'ukuran_kiri'  => 'nullable|string|max:20',
             'ukuran_kanan' => 'nullable|string|max:20',
@@ -110,7 +168,7 @@ class CustomerController extends Controller
                 'max:30',
                 // Format nomor HP Indonesia: 08xx, 628xx, +628xx
                 'regex:/^(\+62|62|0)8[0-9]{7,12}$/',
-                'unique:customers,no_hp,' . $id,
+                Rule::unique('customers', 'no_hp')->ignore($id)->whereNull('deleted_at'),
             ],
         ], [
             'no_hp.required' => 'Nomor HP wajib diisi untuk melengkapi profil.',

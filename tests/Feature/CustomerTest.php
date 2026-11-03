@@ -108,4 +108,75 @@ class CustomerTest extends TestCase
             ->assertStatus(404)
             ->assertJson(['success' => false, 'message' => 'Customer tidak ditemukan']);
     }
+
+    // ─── BE-11: POST /api/customers idempoten via client_uuid ───────
+
+    public function test_store_creates_customer_and_persists_client_uuid(): void
+    {
+        $uuid = (string) \Illuminate\Support\Str::uuid();
+
+        $this->postJson('/api/customers', [
+            'client_uuid' => $uuid,
+            'nama'        => 'Pelanggan Anonim',
+            'no_hp'       => '081200000010',
+        ])->assertStatus(201)->assertJsonPath('client_uuid', $uuid);
+
+        $this->assertDatabaseHas('customers', ['client_uuid' => $uuid, 'nama' => 'Pelanggan Anonim']);
+    }
+
+    public function test_store_replay_with_same_client_uuid_returns_same_row_without_duplicate(): void
+    {
+        $uuid = (string) \Illuminate\Support\Str::uuid();
+        $payload = ['client_uuid' => $uuid, 'nama' => 'Pelanggan Anonim', 'no_hp' => '081200000011'];
+
+        $first = $this->postJson('/api/customers', $payload)->assertStatus(201);
+        // Respons pertama "hilang"; klien mengulang request yang sama
+        $second = $this->postJson('/api/customers', $payload)->assertStatus(200);
+
+        $this->assertSame($first->json('id'), $second->json('id'));
+        $this->assertSame(1, Customer::where('client_uuid', $uuid)->count());
+        $this->assertSame(1, Customer::count());
+    }
+
+    public function test_store_without_client_uuid_still_works_and_phone_stays_unique(): void
+    {
+        $this->postJson('/api/customers', ['nama' => 'A', 'no_hp' => '081200000012'])->assertStatus(201);
+
+        $this->postJson('/api/customers', ['nama' => 'B', 'no_hp' => '081200000012'])
+            ->assertStatus(422)
+            ->assertJsonPath('errors.no_hp.0', 'Nomor HP sudah terdaftar pada pelanggan lain!');
+    }
+
+    public function test_store_rejects_malformed_client_uuid(): void
+    {
+        $this->postJson('/api/customers', [
+            'client_uuid' => 'bukan-uuid', 'nama' => 'A', 'no_hp' => '081200000013',
+        ])->assertStatus(422)->assertJsonValidationErrors(['client_uuid']);
+    }
+
+    public function test_store_replay_of_deleted_customer_returns_409(): void
+    {
+        $uuid = (string) \Illuminate\Support\Str::uuid();
+        $payload = ['client_uuid' => $uuid, 'nama' => 'A', 'no_hp' => '081200000014'];
+        $id = $this->postJson('/api/customers', $payload)->json('id');
+        $this->deleteJson('/api/customers/' . $id)->assertStatus(200);
+
+        $this->postJson('/api/customers', $payload)->assertStatus(409);
+        $this->assertSame(0, Customer::count());
+    }
+
+    public function test_phone_of_soft_deleted_customer_can_be_reused(): void
+    {
+        $id = $this->postJson('/api/customers', ['nama' => 'A', 'no_hp' => '081200000015'])->json('id');
+        $this->deleteJson('/api/customers/' . $id)->assertStatus(200);
+
+        $this->postJson('/api/customers', ['nama' => 'B', 'no_hp' => '081200000015'])->assertStatus(201);
+    }
+
+    public function test_store_requires_phone_until_decision_k1(): void
+    {
+        // K1 (no_hp boleh kosong?) belum dijawab pemilik: perilaku saat ini dipertahankan.
+        $this->postJson('/api/customers', ['nama' => 'Tanpa HP'])
+            ->assertStatus(422)->assertJsonValidationErrors(['no_hp']);
+    }
 }
