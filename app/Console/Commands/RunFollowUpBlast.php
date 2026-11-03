@@ -82,13 +82,18 @@ class RunFollowUpBlast extends Command
             $message = $this->buildMessage($schedule);
 
             // Kirim via WhatsApp Gateway
-            $success = $whatsApp->sendMessage($customer->no_hp, $message);
+            $sendResult = $whatsApp->sendWhatsAppMessage($customer->no_hp, $message);
 
-            if ($success) {
+            if ($sendResult['success']) {
+                // Status 'sent' = diterima antrean provider, BUKAN terkirim ke pelanggan.
+                // provider_status menyimpan status proses mentah dari provider (mis. 'pending'),
+                // lalu diperbarui oleh webhook (WebhookController::fonnteStatus).
                 $schedule->update([
-                    'status'  => FollowUpSchedule::STATUS_SENT,
-                    'sent_at' => now(),
-                    'notes'   => null,
+                    'status'              => FollowUpSchedule::STATUS_SENT,
+                    'sent_at'             => now(),
+                    'provider_message_id' => $sendResult['id'] ?? null,
+                    'provider_status'     => $sendResult['process'] ?? $sendResult['status'] ?? 'sent',
+                    'notes'               => null,
                 ]);
                 $sent++;
 
@@ -101,7 +106,8 @@ class RunFollowUpBlast extends Command
             } else {
                 $schedule->update([
                     'status' => FollowUpSchedule::STATUS_FAILED,
-                    'notes'  => 'Gagal mengirim pesan via WhatsApp Gateway.',
+                    'notes'  => 'Gagal mengirim pesan via WhatsApp Gateway'
+                              . (!empty($sendResult['reason']) ? ': ' . $sendResult['reason'] : '.'),
                 ]);
                 $failed++;
 

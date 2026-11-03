@@ -40,6 +40,7 @@ return [
         'api_token'      => env('FONNTE_API_TOKEN', ''),
         'api_url'        => env('FONNTE_API_URL', 'https://api.fonnte.com/send'),
         'pacing_seconds' => env('FONNTE_PACING_SECONDS', 2),     // Jeda anti-spam detik per pesan
+        'webhook_secret' => env('FONNTE_WEBHOOK_SECRET', ''),    // Rahasia bersama untuk webhook status; kosong = webhook nonaktif
     ],
 
     'bpjs' => [

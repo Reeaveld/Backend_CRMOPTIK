@@ -12,11 +12,6 @@ use Illuminate\Support\Facades\Log;
  * Mode operasi dikontrol oleh env variable FONNTE_MODE:
  *   - 'dry_run' (default): Pesan di-log ke storage/logs, TIDAK ada HTTP call.
  *   - 'live': Pesan dikirim sungguhan ke API Fonnte.
- *
- * Konfigurasi .env yang diperlukan:
- *   FONNTE_MODE=dry_run
- *   FONNTE_API_TOKEN=your_api_token_here
- *   FONNTE_API_URL=https://api.fonnte.com/send   (opsional, ada default)
  */
 class FonnteService implements WhatsAppServiceInterface
 {
@@ -33,11 +28,22 @@ class FonnteService implements WhatsAppServiceInterface
 
     /**
      * {@inheritDoc}
-     *
-     * Normalisasi nomor HP ke format 628xxx sebelum pengiriman.
-     * Mencatat log detail untuk kedua mode (dry_run dan live).
      */
     public function sendMessage(string $phone, string $message, ?int $scheduleTimestamp = null): bool
+    {
+        $result = $this->sendWhatsAppMessage($phone, $message, $scheduleTimestamp);
+        return $result['success'];
+    }
+
+    /**
+     * Mengirim pesan dan mengembalikan payload detail (provider message id & status).
+     *
+     * success=true berarti pesan diterima antrean Fonnte (respons memuat "process":"pending"),
+     * BUKAN terkirim ke pelanggan. Status pengiriman nyata hanya datang lewat webhook.
+     *
+     * {@inheritDoc}
+     */
+    public function sendWhatsAppMessage(string $phone, string $message, ?int $scheduleTimestamp = null): array
     {
         // Normalisasi nomor: 08xxx → 628xxx
         $normalizedPhone = $this->normalizePhone($phone);
@@ -46,7 +52,13 @@ class FonnteService implements WhatsAppServiceInterface
             Log::warning('[Fonnte] Nomor HP kosong atau tidak valid, pesan dibatalkan.', [
                 'original_phone' => $phone,
             ]);
-            return false;
+            return [
+                'success' => false,
+                'id'      => null,
+                'process' => null,
+                'status'  => 'failed',
+                'reason'  => 'Nomor HP kosong atau tidak valid.',
+            ];
         }
 
         // Bangun payload request
@@ -55,28 +67,38 @@ class FonnteService implements WhatsAppServiceInterface
             'message' => $message,
         ];
 
-        // Tambahkan schedule jika ada
         if ($scheduleTimestamp !== null) {
             $payload['schedule'] = $scheduleTimestamp;
         }
 
         // ─── DRY RUN MODE ───────────────────────────────────────────
         if ($this->mode === 'dry_run') {
+            $simulatedId = 'dry_run_' . bin2hex(random_bytes(6));
             Log::info('[Fonnte Dry-Run] Pesan TIDAK dikirim (mode dry_run).', [
-                'to'       => $normalizedPhone,
-                'message'  => $message,
-                'schedule' => $scheduleTimestamp
-                    ? date('Y-m-d H:i:s', $scheduleTimestamp)
-                    : 'immediate',
-                'payload'  => $payload,
+                'to'           => $normalizedPhone,
+                'message'      => $message,
+                'simulated_id' => $simulatedId,
+                'schedule'     => $scheduleTimestamp ? date('Y-m-d H:i:s', $scheduleTimestamp) : 'immediate',
             ]);
-            return true;
+            return [
+                'success' => true,
+                'id'      => $simulatedId,
+                'process' => 'dry_run',
+                'status'  => 'sent',
+                'reason'  => null,
+            ];
         }
 
         // ─── LIVE MODE ──────────────────────────────────────────────
         if (empty($this->apiToken)) {
             Log::error('[Fonnte] API token tidak dikonfigurasi. Set FONNTE_API_TOKEN di .env');
-            return false;
+            return [
+                'success' => false,
+                'id'      => null,
+                'process' => null,
+                'status'  => 'failed',
+                'reason'  => 'FONNTE_API_TOKEN belum dikonfigurasi.',
+            ];
         }
 
         try {
@@ -84,7 +106,6 @@ class FonnteService implements WhatsAppServiceInterface
                     'Authorization' => $this->apiToken,
                 ])
                 ->retry(3, 200, function (\Exception $exception) {
-                    // Retry hanya untuk network error, bukan client error 4xx
                     return $exception instanceof \Illuminate\Http\Client\ConnectionException;
                 })
                 ->timeout(15)
@@ -92,16 +113,26 @@ class FonnteService implements WhatsAppServiceInterface
 
             if ($response->successful()) {
                 $body = $response->json();
-                // Fonnte mengembalikan { "status": true } jika berhasil
                 $success = $body['status'] ?? false;
 
-                Log::info('[Fonnte Live] Pesan terkirim.', [
+                // Fonnte mengembalikan ID array misal "id": ["123456"] atau string
+                $rawId = $body['id'] ?? null;
+                $messageId = is_array($rawId) ? ($rawId[0] ?? null) : $rawId;
+
+                Log::info('[Fonnte Live] Pesan diterima antrean Fonnte.', [
                     'to'       => $normalizedPhone,
                     'status'   => $success,
-                    'response' => $body,
+                    'id'       => $messageId,
+                    'process'  => $body['process'] ?? null,
                 ]);
 
-                return (bool) $success;
+                return [
+                    'success' => (bool) $success,
+                    'id'      => $messageId ? (string) $messageId : null,
+                    'process' => $body['process'] ?? null,
+                    'status'  => $success ? 'sent' : 'failed',
+                    'reason'  => $success ? null : (string) ($body['reason'] ?? 'Ditolak oleh Fonnte.'),
+                ];
             }
 
             Log::error('[Fonnte Live] HTTP error.', [
@@ -109,41 +140,43 @@ class FonnteService implements WhatsAppServiceInterface
                 'http_status' => $response->status(),
                 'body'        => $response->body(),
             ]);
-            return false;
+
+            return [
+                'success' => false,
+                'id'      => null,
+                'process' => null,
+                'status'  => 'failed',
+                'reason'  => 'HTTP ' . $response->status() . ' dari Fonnte.',
+            ];
 
         } catch (\Exception $e) {
             Log::error('[Fonnte Live] Exception saat mengirim pesan.', [
-                'to'      => $normalizedPhone,
-                'error'   => $e->getMessage(),
+                'to'    => $normalizedPhone,
+                'error' => $e->getMessage(),
             ]);
-            return false;
+
+            return [
+                'success' => false,
+                'id'      => null,
+                'process' => null,
+                'status'  => 'failed',
+                'reason'  => 'Exception: ' . $e->getMessage(),
+            ];
         }
     }
 
     /**
      * Normalisasi nomor HP Indonesia ke format internasional tanpa +.
-     *
-     * 08123456789  → 628123456789
-     * +628123456789 → 628123456789
-     * 628123456789  → 628123456789 (sudah benar)
-     *
-     * @param  string $phone
-     * @return string Nomor yang sudah dinormalisasi, atau string kosong jika invalid
      */
     public function normalizePhone(string $phone): string
     {
-        // Bersihkan: hapus spasi, strip, kurung
         $cleaned = preg_replace('/[^0-9+]/', '', $phone);
-
-        // Hapus + di depan jika ada
         $cleaned = ltrim($cleaned, '+');
 
-        // Konversi 0 di depan → 62
         if (str_starts_with($cleaned, '0')) {
             $cleaned = '62' . substr($cleaned, 1);
         }
 
-        // Validasi: harus diawali 628 dan total 11-15 digit
         if (preg_match('/^628[0-9]{7,12}$/', $cleaned)) {
             return $cleaned;
         }

@@ -35,6 +35,12 @@ Route::get('/health', function () {
 Route::post('/login', [AuthController::class, 'login'])->middleware('throttle:5,1');
 
 // =====================================================================
+// WEBHOOK FONNTE (dilindungi rahasia bersama, bukan Sanctum)
+// =====================================================================
+Route::post('/webhooks/fonnte/status', [\App\Http\Controllers\Api\WebhookController::class, 'fonnteStatus'])
+    ->middleware('throttle:120,1');
+
+// =====================================================================
 // PROTECTED API ROUTES (Sanctum Auth Required + Throttling)
 // =====================================================================
 Route::middleware(['auth:sanctum', 'throttle:60,1'])->group(function () {

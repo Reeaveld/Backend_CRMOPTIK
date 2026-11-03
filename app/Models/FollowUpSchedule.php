@@ -18,6 +18,8 @@ class FollowUpSchedule extends Model
     public const STATUS_BLOCKED = 'blocked_incomplete_profile';
     public const STATUS_SENT = 'sent';
     public const STATUS_FAILED = 'failed';
+    /** Dibatalkan oleh admin (mis. pelanggan dihapus). Bukan kegagalan kirim; tidak dihitung di metrik. */
+    public const STATUS_CANCELLED = 'cancelled';
 
     /**
      * Type constants — jenis follow-up yang dijadwalkan.
@@ -33,11 +35,17 @@ class FollowUpSchedule extends Model
         'status',
         'sent_at',
         'notes',
+        'provider_message_id',
+        'provider_status',
+        'provider_state',
+        'provider_stateid',
+        'delivered_at',
     ];
 
     protected $casts = [
         'scheduled_date' => 'date',
         'sent_at'        => 'datetime',
+        'delivered_at'   => 'datetime',
     ];
 
     // ─── Relationships ──────────────────────────────────────────────
