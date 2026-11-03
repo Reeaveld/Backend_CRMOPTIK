@@ -12,9 +12,12 @@ return Application::configure(basePath: dirname(__DIR__))
         health: '/up',
     )
     ->withMiddleware(function (Middleware $middleware): void {
-        // Percayai reverse proxy yang dikonfigurasi melalui environment variable
-        $trustedProxies = env('TRUSTED_PROXIES', '*');
-        $middleware->trustProxies(at: $trustedProxies === '*' ? '*' : explode(',', $trustedProxies));
+        // Percayai reverse proxy yang dikonfigurasi melalui config/app.php (aman saat config:cache)
+        $trustedProxies = config('app.trusted_proxies');
+        if (!empty($trustedProxies)) {
+            $proxies = $trustedProxies === '*' ? '*' : array_map('trim', explode(',', $trustedProxies));
+            $middleware->trustProxies(at: $proxies);
+        }
     })
     ->withExceptions(function (Exceptions $exceptions): void {
         //

@@ -16,14 +16,29 @@ class SecurityAndHealthTest extends TestCase
         $response = $this->getJson('/api/health');
 
         $response->assertStatus(200)
-            ->assertJson([
+            ->assertExactJson([
                 'status' => 'healthy',
-            ])
-            ->assertJsonMissing([
+            ]);
+    }
+
+    public function test_admin_health_endpoint_requires_auth_and_returns_details(): void
+    {
+        // Unauthenticated request must fail
+        $unauth = $this->getJson('/api/admin/health');
+        $unauth->assertStatus(401);
+
+        // Authenticated admin request
+        $user = User::factory()->create();
+        \Laravel\Sanctum\Sanctum::actingAs($user);
+
+        $response = $this->getJson('/api/admin/health');
+        $response->assertStatus(200)
+            ->assertJsonStructure([
+                'status',
                 'database',
-                'error',
-                'driver',
                 'fonnte_mode',
+                'last_followup',
+                'server_time',
             ]);
     }
 
@@ -59,5 +74,29 @@ class SecurityAndHealthTest extends TestCase
         ]);
 
         $throttledResponse->assertStatus(429);
+    }
+
+    public function test_login_throttle_cannot_be_bypassed_by_spoofing_x_forwarded_for(): void
+    {
+        // Default aman (TRUSTED_PROXIES kosong): header X-Forwarded-For dari klien diabaikan.
+        $this->assertEmpty(config('app.trusted_proxies'));
+
+        User::factory()->create([
+            'email'    => 'admin@optikcrm.com',
+            'password' => Hash::make('secret123'),
+        ]);
+
+        for ($i = 1; $i <= 5; $i++) {
+            $this->postJson('/api/login', [
+                'email'    => 'admin@optikcrm.com',
+                'password' => 'wrongpassword',
+            ], ['X-Forwarded-For' => "203.0.113.{$i}"])->assertStatus(401);
+        }
+
+        // IP spoof baru pada request ke-6 tetap harus kena throttle
+        $this->postJson('/api/login', [
+            'email'    => 'admin@optikcrm.com',
+            'password' => 'wrongpassword',
+        ], ['X-Forwarded-For' => '203.0.113.200'])->assertStatus(429);
     }
 }

@@ -5,12 +5,13 @@ namespace App\Helpers;
 class BpjsHelper
 {
     /**
-     * Pola regex dasar nomor invoice klaim BPJS Optik Cengkareng.
-     * Karakter ke-5 dapat berupa huruf 'O' kapital atau angka '0'.
+     * Pola regex dasar nomor invoice klaim BPJS Optik Cengkareng (prefix saja).
+     * Karakter ke-5 dapat berupa huruf 'O' kapital atau angka (format asli: 0115O006L + digit).
+     * Satu-satunya sumber konfigurasi: services.bpjs.invoice_pattern (env BPJS_INVOICE_PATTERN).
      */
     public static function pattern(): string
     {
-        return config('services.bpjs.invoice_pattern', '0115[O00-9]006L');
+        return config('services.bpjs.invoice_pattern', '0115[O0-9]006L');
     }
 
     /**
@@ -22,7 +23,7 @@ class BpjsHelper
             return false;
         }
 
-        $pattern = self::pattern();
-        return (bool) preg_match('/' . $pattern . '/i', $invoiceNumber);
+        // Diawali pola provider, diikuti hanya digit (nomor urut)
+        return (bool) preg_match('/^' . self::pattern() . '\d+$/i', trim($invoiceNumber));
     }
 }

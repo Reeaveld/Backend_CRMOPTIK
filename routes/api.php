@@ -43,6 +43,26 @@ Route::middleware(['auth:sanctum', 'throttle:60,1'])->group(function () {
         return $request->user();
     });
 
+    Route::get('/admin/health', function () {
+        $dbOk = false;
+        try {
+            DB::connection()->getPdo();
+            $dbOk = true;
+        } catch (\Throwable $e) {}
+
+        $lastFollowup = \App\Models\FollowUpSchedule::whereNotNull('sent_at')
+            ->latest('sent_at')
+            ->value('sent_at');
+
+        return response()->json([
+            'status'        => $dbOk ? 'healthy' : 'degraded',
+            'database'      => $dbOk ? 'connected' : 'disconnected',
+            'fonnte_mode'   => config('services.fonnte.mode'),
+            'last_followup' => $lastFollowup,
+            'server_time'   => now()->toIso8601String(),
+        ]);
+    });
+
     Route::post('/logout', [AuthController::class, 'logout']);
 
     // Dashboard Analytics & Reports

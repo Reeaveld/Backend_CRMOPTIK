@@ -123,4 +123,26 @@ return [
         'store' => env('APP_MAINTENANCE_STORE', 'database'),
     ],
 
+    /*
+    |--------------------------------------------------------------------------
+    | Trusted Proxies
+    |--------------------------------------------------------------------------
+    |
+    | Konfigurasi IP reverse proxy yang dipercaya untuk header X-Forwarded-For.
+    | Default null (tidak percaya proxy klien apapun demi mencegah IP spoofing).
+    |
+    */
+    'trusted_proxies' => env('TRUSTED_PROXIES', null),
+
+    /*
+    |--------------------------------------------------------------------------
+    | Import: paksa header Content-Length
+    |--------------------------------------------------------------------------
+    |
+    | Tambalan untuk server dev (`php artisan serve`) yang memotong JSON besar.
+    | Matikan (false) di produksi setelah diuji; lihat DEPLOYMENT.md.
+    |
+    */
+    'import_force_content_length' => env('IMPORT_FORCE_CONTENT_LENGTH', true),
+
 ];
