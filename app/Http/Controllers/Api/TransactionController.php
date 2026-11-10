@@ -23,7 +23,7 @@ class TransactionController extends Controller
             'customer_id' => 'required|exists:customers,id',
             'amount' => 'required|numeric',
             'transaction_date' => 'required|date',
-            
+
             // Validasi Array Prescriptions (Resep)
             'prescriptions' => 'required|array|min:1',
             'prescriptions.*.eye_side' => 'required|in:OD,OS',
@@ -34,7 +34,7 @@ class TransactionController extends Controller
         try {
             // Gunakan DB Transaction untuk integritas data
             $result = DB::transaction(function () use ($validated, $planner) {
-                
+
                 // A. Generate Invoice Number ala Frappe (INV/TAHUN/RANDOM)
                 $invoiceNumber = 'INV/' . date('Y') . '/' . strtoupper(Str::random(5));
 
@@ -60,12 +60,32 @@ class TransactionController extends Controller
                     ]);
                 }
 
-                // D. Auto-create jadwal follow-up
+                // D. Auto-create jadwal follow-up & Update spesifikasi lensa terbaru pada customer
                 $customer = Customer::find($validated['customer_id']);
+
+                // Update spesifikasi resep terbaru di profil customer
+                $od = collect($validated['prescriptions'])->firstWhere('eye_side', 'OD');
+                $os = collect($validated['prescriptions'])->firstWhere('eye_side', 'OS');
+
+                $updateCustomerData = [];
+                if ($od && isset($od['sphere'])) {
+                    $updateCustomerData['ukuran_kanan'] = sprintf('%.2f', $od['sphere']);
+                }
+                if ($os && isset($os['sphere'])) {
+                    $updateCustomerData['ukuran_kiri'] = sprintf('%.2f', $os['sphere']);
+                }
+                $lensType = $od['lens_type'] ?? $os['lens_type'] ?? null;
+                if ($lensType && !empty($lensType)) {
+                    $updateCustomerData['jenis_lensa'] = $lensType;
+                }
+                if (!empty($updateCustomerData) && $customer) {
+                    $customer->update($updateCustomerData);
+                }
+
                 $transactionDate = Carbon::parse($validated['transaction_date']);
 
                 // Tentukan status awal berdasarkan kelengkapan profil customer
-                $initialStatus = $customer->isProfileComplete()
+                $initialStatus = $customer && $customer->isProfileComplete()
                     ? FollowUpSchedule::STATUS_PENDING
                     : FollowUpSchedule::STATUS_BLOCKED;
 
@@ -87,7 +107,7 @@ class TransactionController extends Controller
             ], 500);
         }
     }
-    
+
     public function indexByCustomer($id)
     {
         $transactions = Transaction::with('prescriptions') // 1. Memuat relasi resep (mencegah N+1 query problem)
